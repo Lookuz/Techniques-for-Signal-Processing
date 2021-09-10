@@ -1,6 +1,7 @@
 import numpy as np
 import torch 
 from torch import nn
+from torch.nn.modules.container import ModuleList
 
 #TODO: Add capability for GPUs
 
@@ -25,23 +26,25 @@ class SelectiveKernel(nn.Module):
         self.softmax = nn.Softmax(dim=0)
 
         # Feature maps
-        self.conv_layers = [
-            nn.Conv1d(
-                C, C, # In/Out channels
-                kernel_size=k, 
-                padding='same' # Same size output
-            ) for k in self.kernels
-        ]
+        self.conv_layers = nn.ModuleList()
+        for k in self.kernels:
+            self.conv_layers.append(
+                nn.Conv1d(
+                    C, C, # In/Out channels
+                    kernel_size=k, 
+                    padding='same' # Same size output
+                )
+            )
 
         # MLP
-        self.mlp = [
-            nn.Linear(in_size, out_size) for in_size, out_size in zip(self.fc_layer_sizes, self.fc_layer_sizes[1:])
-        ]
+        self.mlp = nn.ModuleList()
+        for in_size, out_size in zip(self.fc_layer_sizes, self.fc_layer_sizes[1:]):
+            self.mlp.append(nn.Linear(in_size, out_size))
 
         # Output heads
-        self.output_heads = [
-            nn.Linear(fc_layer_sizes[-1], C) for _ in range(len(self.kernels))
-        ]
+        self.output_heads = nn.ModuleList()
+        for _ in range(len(self.kernels)):
+            self.output_heads.append(nn.Linear(fc_layer_sizes[-1], C)) 
 
     def forward(self, x):
         # Feature maps via 1D convolution

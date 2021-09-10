@@ -122,7 +122,7 @@ class SKCNNBlock(nn.Module):
         )
 
         # Batch normalization
-        self.batch_norm = nn.BatchNorm1d(C_in)
+        self.batch_norm = nn.BatchNorm1d(C_out)
 
     def forward(self, x):
         # Selective kernel 

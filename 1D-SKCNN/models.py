@@ -73,3 +73,49 @@ class SelectiveKernel(nn.Module):
         output = torch.sum(output, dim=0)
         
         return output
+
+# Singular block in the SKCNN network architecture
+class SKCNNBlock(nn.Module):
+    def __init__(
+        self,
+        W,
+        C,
+        # SK parameters
+        kernels=[9, 16],
+        fc_layer_sizes=[512],
+        activation_fn=nn.ReLU,
+        # Pooling parameters
+        pooling_size=7,
+        stride=7
+        ):
+        super().__init__()
+
+        # Selective Kernel
+        self.selective_kernel = SelectiveKernel(
+            W, C,
+            kernels=kernels,
+            fc_layer_sizes=fc_layer_sizes,
+            activation_fn=activation_fn
+        )
+
+        # Max pooling
+        self.max_pooling = nn.MaxPool1d(
+            kernel_size=pooling_size,
+            stride=stride
+        )
+
+        # Batch normalization
+        self.batch_norm = nn.BatchNorm1d(C)
+
+    def forward(self, x):
+        # Selective kernel 
+        output = self.selective_kernel(x)
+        output = output.unsqueeze(0)
+
+        # Max pooling
+        output = self.max_pooling(output)
+
+        # Batch normalization
+        output = self.batch_norm(output)
+
+        return output

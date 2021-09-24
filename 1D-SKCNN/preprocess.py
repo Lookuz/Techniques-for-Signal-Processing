@@ -46,4 +46,4 @@ def fast_fourier_transform(x):
     return np.real(x_am_fft)
 
 def amplitude_normalization(x):
-    return x/np.max(x, axis=-1)
+    return x/np.max(x, axis=-1)[:, np.newaxis]

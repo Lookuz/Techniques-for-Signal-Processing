@@ -76,14 +76,15 @@ class SelectiveKernel(nn.Module):
         for fc in self.mlp:
             output = self.activation_fn(fc(output))
 
-        weights = torch.cat([
+        weights = [
             fc(output) for fc in self.output_heads
-        ])
+        ]
+        weights = torch.stack(weights)
         weights = self.softmax(weights)
 
         # Soft attention via convex combination with weights
-        feature_maps = torch.cat(feature_maps)
-        output = weights[:, :, None] * feature_maps
+        feature_maps = torch.stack(feature_maps)
+        output = weights[:, :, :, None] * feature_maps
         output = torch.sum(output, dim=0)
         
         return output
@@ -127,7 +128,6 @@ class SKCNNBlock(nn.Module):
     def forward(self, x):
         # Selective kernel 
         output = self.selective_kernel(x)
-        output = output.unsqueeze(0)
 
         # Max pooling
         output = self.max_pooling(output)

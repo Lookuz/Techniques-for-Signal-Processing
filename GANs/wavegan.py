@@ -266,3 +266,25 @@ class WaveGANGenerator(nn.Module):
         x = self.fc_block(x)
         x = x.view(-1, self.fc_out_channels, self.fc_length)
         return self.conv_blocks(x)
+
+
+class WaveGANDiscriminator(nn.Module):
+    """
+    Discriminator network for WaveGAN
+    Adapted to use explicit waveform signal dimensions based on the output from the generator network
+    """
+    def __init__(
+        self,
+        in_dim,
+        shift_factor=2,
+        alpha=0.2,
+        use_batch_norm=False,
+        device=device) -> None:
+        super().__init__()
+
+        self.in_dim = in_dim
+        self.use_batch_norm = use_batch_norm
+        self.device = device
+        self.alpha = alpha
+
+        

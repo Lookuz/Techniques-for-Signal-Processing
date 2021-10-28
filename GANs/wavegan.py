@@ -91,7 +91,6 @@ class PhaseShuffle(nn.Module):
                 x.shape[0]).random_(0, 2*self.shift_factor + 1) - self.shift_factor
         )
         k_list = k_list.numpy().astype(int)
-        print(k_list)
 
         # Combine sample indices into lists so that less shuffle operations
         # need to be performed
@@ -102,10 +101,8 @@ class PhaseShuffle(nn.Module):
                 k_map[k] = []
             
             k_map[k].append(idx)
-        print(k_map)
         
         x_shuffle = x.clone()
-        print(x_shuffle)
 
         # Apply shuffle to each sample, applying reflective padding when necessary
         for k, idxs in k_map.items():
@@ -116,7 +113,6 @@ class PhaseShuffle(nn.Module):
                 
         assert x_shuffle.shape == x.shape
 
-        print(x_shuffle)
 
         return x_shuffle
 
@@ -133,7 +129,7 @@ class Conv1DBlock(nn.Module):
         shift_factor=2,
         stride=4,
         padding=11, 
-        use_batch_norm=False,
+        use_batch_norm=True,
         dropout_prob=0,
         device=device
     ):
@@ -189,8 +185,9 @@ class WaveGANGenerator(nn.Module):
         self,
         in_dim,
         out_dim,
-        kernel_size=24,
-        num_channels=[1024, 512, 256, 128, 64], # Number of channels of filters for each convolutional block
+        kernel_size=25,
+        # num_channels=[1024, 512, 256, 128, 64], # Number of channels of filters for each convolutional block
+        num_channels=[1, 512, 256, 128, 64],
         stride=4,
         upsample=2, # Default 2
         use_batch_norm=False,
@@ -279,16 +276,56 @@ class WaveGANDiscriminator(nn.Module):
     def __init__(
         self,
         in_dim,
+        num_channels = [1, 64, 128, 256, 512, 1024],
+        kernel_size=25,
         shift_factor=2,
         alpha=0.2,
         stride=4,
         padding=11,
-        use_batch_norm=False,
+        use_batch_norm=True,
         device=device) -> None:
         super().__init__()
 
         self.in_dim = in_dim
+        self.stride = stride
+        self.padding = padding
+        self.shift_factor = shift_factor
         self.use_batch_norm = use_batch_norm
         self.device = device
         self.alpha = alpha
+        self.kernel_size = kernel_size
 
+        # Convolutional blocks
+        conv_blocks = []
+        for in_channels, out_channels in zip(num_channels, num_channels[1:]):
+            conv_blocks.append(
+                Conv1DBlock(
+                    in_channels, out_channels,
+                    kernel_size=self.kernel_size,
+                    alpha=self.alpha,
+                    shift_factor=self.shift_factor,
+                    stride=self.stride if out_channels != num_channels[-1] else self.stride//2, # Halve the stride for last conv block
+                    padding=self.padding if out_channels != num_channels[-1] else self.padding + 1,
+                    device=self.device
+                )
+            )
+        conv_blocks.append(nn.Flatten())    
+        self.conv_blocks = nn.Sequential(*conv_blocks)
+
+        # Linear layer with sigmoid to calculate probabilities 
+        self.fc_in_dim = self.in_dim // (self.stride ** (len(num_channels) - 2))
+        self.fc_in_dim = self.fc_in_dim // (self.stride // 2)
+        fc_block = [
+            nn.Linear(self.fc_in_dim * num_channels[-1], 1, device=self.device),
+            nn.Sigmoid()
+        ]
+        self.fc_block = nn.Sequential(*fc_block)
+
+        # Normalize initialization parameters
+        for m in self.modules():
+            if isinstance(m, nn.Conv1d) or isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight.data)
+
+    def forward(self, x):
+        x = self.conv_blocks(x)
+        return self.fc_block(x)

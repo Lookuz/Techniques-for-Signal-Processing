@@ -465,4 +465,5 @@ class WaveGANGeneratorV2(nn.Module):
         x = self.encoder_fc_block(x)
         x = torch.unsqueeze(x, 1) # Add channel dimension
         x = self.decoder_fc_block(x)
+        x = x.view(-1, self.decoder_fc_out_channels, self.decoder_fc_length)
         return self.decoder_conv_blocks(x)

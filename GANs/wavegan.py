@@ -1,8 +1,7 @@
 import math
 import numpy as np
 import torch
-from torch._C import parse_schema
-import torch.functional as F
+import torch.nn.functional as F
 from torch import nn
 from torch.nn.modules.batchnorm import BatchNorm1d
 
@@ -88,10 +87,11 @@ class PhaseShuffle(nn.Module):
 
         # Uniform distribution over axes in the range (-shift_factor, shift_factor)
         k_list = (
-            torch.tensor(
-                x.shape[0], device=self.device).random_(0, 2*self.shift_factor + 1) - self.shift_factor
+            torch.Tensor(
+                x.shape[0]).random_(0, 2*self.shift_factor + 1) - self.shift_factor
         )
-        k_list = k_list.cpu().numpy().astype(int)
+        k_list = k_list.numpy().astype(int)
+        print(k_list)
 
         # Combine sample indices into lists so that less shuffle operations
         # need to be performed
@@ -102,8 +102,10 @@ class PhaseShuffle(nn.Module):
                 k_map[k] = []
             
             k_map[k].append(idx)
+        print(k_map)
         
         x_shuffle = x.clone()
+        print(x_shuffle)
 
         # Apply shuffle to each sample, applying reflective padding when necessary
         for k, idxs in k_map.items():
@@ -113,6 +115,8 @@ class PhaseShuffle(nn.Module):
                 x_shuffle[idxs] = F.pad(x[idxs][..., -k:], (0, -k), mode="reflect")
                 
         assert x_shuffle.shape == x.shape
+
+        print(x_shuffle)
 
         return x_shuffle
 
@@ -128,7 +132,7 @@ class Conv1DBlock(nn.Module):
         alpha=0.2,
         shift_factor=2,
         stride=4,
-        padding=11,
+        padding=11, 
         use_batch_norm=False,
         dropout_prob=0,
         device=device
@@ -186,9 +190,9 @@ class WaveGANGenerator(nn.Module):
         in_dim,
         out_dim,
         kernel_size=24,
-        num_channels=[512, 256, 128, 64], # Number of channels of filters for each convolutional block
+        num_channels=[1024, 512, 256, 128, 64], # Number of channels of filters for each convolutional block
         stride=4,
-        upsample=True,
+        upsample=2, # Default 2
         use_batch_norm=False,
         device=device):
         super().__init__()
@@ -200,13 +204,13 @@ class WaveGANGenerator(nn.Module):
         self.out_dim = out_dim
 
         self.use_batch_norm = use_batch_norm
-        self.upsample = 4 if upsample else None
+        self.upsample = upsample
         self.stride = 1 if upsample else stride
         self.device = device
 
         # FC layer
-        self.fc_out_channels = num_channels[0] * 2
-        self.fc_length = (self.out_dim // (4 ** (len(num_channels) + 1)))
+        self.fc_out_channels = num_channels[0]
+        self.fc_length = (self.out_dim // (self.upsample ** len(num_channels)))
         fc_out_dim = self.fc_out_channels * self.fc_length
         fc_block = [
             nn.Linear(self.in_dim, fc_out_dim)
@@ -225,7 +229,6 @@ class WaveGANGenerator(nn.Module):
 
         # Convolutional layers
         conv_blocks = []
-        num_channels.insert(0, num_channels[0] * 2)
         for in_channels, out_channels in zip(num_channels, num_channels[1:]):
             conv_blocks.append(
                 Transpose1DBlock(
@@ -278,6 +281,8 @@ class WaveGANDiscriminator(nn.Module):
         in_dim,
         shift_factor=2,
         alpha=0.2,
+        stride=4,
+        padding=11,
         use_batch_norm=False,
         device=device) -> None:
         super().__init__()
@@ -287,4 +292,3 @@ class WaveGANDiscriminator(nn.Module):
         self.device = device
         self.alpha = alpha
 
-        

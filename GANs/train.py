@@ -115,11 +115,29 @@ def train(
             discriminator.zero_grad()
             optimizer_d.zero_grad()
 
+            # Discriminator loss using Wasserstein distance with gradient penalty
             loss = compute_discriminator_loss(
                 discriminator, x_real, x_generated, penalty_coefficient=penalty_coefficient
             )
             loss.backward()
             optimizer_d.step()
 
-
         # Compute generator loss
+        set_trainable_gradients(generator, True)
+        set_trainable_gradients(discriminator, False)
+
+        generator.zero_grad()
+        optimizer_g.zero_grad()
+        discriminator.zero_grad()
+        optimizer_d.zero_grad()
+
+        # Loss function using negative of discriminator output
+        noise_vectors = sample_noise(batch_size, batch_size=batch_size, device=device)
+        x_generated = generator(noise_vectors)
+
+        discriminator_output = discriminator(x_generated)
+        loss = - discriminator_output.mean()
+
+        loss.backward()
+        optimizer_g.step()
+

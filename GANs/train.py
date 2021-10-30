@@ -115,5 +115,11 @@ def train(
             discriminator.zero_grad()
             optimizer_d.zero_grad()
 
+            loss = compute_discriminator_loss(
+                discriminator, x_real, x_generated, penalty_coefficient=penalty_coefficient
+            )
+            loss.backward()
+            optimizer_d.step()
+
 
         # Compute generator loss

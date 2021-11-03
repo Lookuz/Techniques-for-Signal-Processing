@@ -54,7 +54,9 @@ class Transpose1DBlock(nn.Module):
 
         if use_batch_norm:
             operations.append(
-                nn.BatchNorm1d(out_channels)
+                nn.BatchNorm1d(
+                    out_channels, 
+                    device=self.device)
             )
 
         operations.append(nn.ReLU())
@@ -153,7 +155,9 @@ class Conv1DBlock(nn.Module):
         # Batch normalization layer
         if use_batch_norm:
             operations.append(
-                nn.BatchNorm1d(out_channels)
+                nn.BatchNorm1d(
+                    out_channels,
+                    device=self.device)
             )
         
         # Activation function
@@ -218,12 +222,12 @@ class WaveGANGenerator(nn.Module):
         self.fc_length = (self.out_dim // (scale ** len(num_channels)))
         fc_out_dim = self.fc_out_channels * self.fc_length
         fc_block = [
-            nn.Linear(self.in_dim, fc_out_dim)
+            nn.Linear(self.in_dim, fc_out_dim, device=self.device)
         ]
 
         if self.use_batch_norm:
             fc_block.append(
-                nn.BatchNorm1d(self.fc_out_channels)
+                nn.BatchNorm1d(self.fc_out_channels, device=self.device)
             )
 
         fc_block.append(
@@ -418,11 +422,11 @@ class WaveGANGeneratorV2(nn.Module):
         self.decoder_fc_length = self.in_dim // (scale ** len(decoder_channels))
         self.decoder_fc_out_dim = self.decoder_fc_out_channels * self.decoder_fc_length
         fc_block = [
-            nn.Linear(self.latent_dim, self.decoder_fc_out_dim)
+            nn.Linear(self.latent_dim, self.decoder_fc_out_dim, device=self.device)
         ]
         if self.use_batch_norm:
             fc_block.append(
-                nn.BatchNorm1d(self.decoder_fc_out_channels)
+                nn.BatchNorm1d(self.decoder_fc_out_channels, device=self.device)
             )
         
         fc_block.append(

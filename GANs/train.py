@@ -4,14 +4,17 @@ from torch import optim
 from torch.autograd import grad, Variable
 from tqdm import tqdm
 
-from .wavegan import WaveGANDiscriminator, WaveGANGenerator
-from .utils import *
+from wavegan import WaveGANDiscriminator, WaveGANGenerator
+from utils import *
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def compute_discriminator_loss(
     discriminator,
     x_real,
     x_generated,
-    penalty_coefficient=10
+    penalty_coefficient=1,
+    device=device
 ):
     """
     Discriminator loss for GANs according to the WGAN-GP technique
@@ -23,9 +26,9 @@ def compute_discriminator_loss(
     y_generated = discriminator(x_generated)
 
     # Enforcing gradient penalty along straight lines between the two distributions
-    epsilon = torch.FloatTensor(batch_size, 1, 1).uniform_(0, 1)
+    epsilon = torch.FloatTensor(batch_size, 1, 1).uniform_(0, 1).to(device)
 
-    x_hat = (1 - epsilon) * x_real.data + epsilon * x_generated.data
+    x_hat = (1 - epsilon) * x_real + epsilon * x_generated
     x_hat = Variable(x_hat, requires_grad=True) # Activate gradients for gradient penalty
 
     y_hat = discriminator(x_hat) # Probability of sampled points of x_hat
@@ -34,7 +37,7 @@ def compute_discriminator_loss(
     gradients = grad(
         outputs=y_hat,
         inputs=x_hat,
-        grad_outputs=torch.ones(y_hat.size()),
+        grad_outputs=torch.ones(y_hat.size(), device=device),
         create_graph=True,
         retain_graph=True,
         only_inputs=True
@@ -54,6 +57,7 @@ def train(
     x,
     generator,
     discriminator,
+    noise_dim=100,
     # Optimizers for generator and discriminator netorks
     optimizer_g=None,
     optimizer_d=None,
@@ -64,8 +68,8 @@ def train(
     beta_1=0, beta_2=0.9,
     # Training parameters
     epochs=100,
-    batch_size=64
-
+    batch_size=64,
+    verbose=True
 ):
     """
     Runs the training routine for the GAN according to the WGAN-GP strategy
@@ -76,18 +80,31 @@ def train(
         optimizer_g, optimizer_d: Optimizers to be used for the generator and discriminator
         penalty_coefficient(lambda), alpha, beta_1, beta_2: Parameters for the default optimizer(Adam)
     """
+    if verbose:
+        if torch.cuda.is_available():
+            print('CUDA device detected. Utilising GPU.')
+            device = torch.device('cuda')
+        else:
+            print('CUDA device not detected. Switching to CPU.')
+            device = torch.device('cpu')
+
 
     if optimizer_g is None:
         optimizer_g = optim.Adam(
+            generator.parameters(),
             lr=alpha, betas=(beta_1, beta_2)
         )
     if optimizer_d is None:
         optimizer_d = optim.Adam(
+            discriminator.parameters(),
             lr=alpha, betas=(beta_1, beta_2)
         )
     
     generator.train()
     discriminator.train()
+
+    if verbose:
+        print("Beginning training...")
 
     for i in tqdm(range(epochs)):
         # Train only the generator
@@ -106,7 +123,7 @@ def train(
             x_real = next(x_dataloader)
 
             # Sample generation noise samples and generated outputs
-            noise_vectors = sample_noise(batch_size, batch_size=batch_size, device=device)
+            noise_vectors = sample_noise(batch_size, dim=noise_dim, device=device)
             x_generated = generator(noise_vectors)
 
             # Compute discriminator loss
@@ -132,7 +149,7 @@ def train(
         optimizer_d.zero_grad()
 
         # Loss function using negative of discriminator output
-        noise_vectors = sample_noise(batch_size, batch_size=batch_size, device=device)
+        noise_vectors = sample_noise(batch_size, dim=noise_dim, device=device)
         x_generated = generator(noise_vectors)
 
         discriminator_output = discriminator(x_generated)
@@ -141,3 +158,7 @@ def train(
         loss.backward()
         optimizer_g.step()
 
+    if verbose:
+        print("Training completed")
+    
+    return generator, discriminator

@@ -8,7 +8,7 @@ def set_trainable_gradients(model, flag):
     Sets the parameters of the given model to trainable or not,
     depending on the set flag
     """
-    for p in model.parameters:
+    for p in model.parameters():
         p.requires_grad = flag
 
 def sample_noise(batch_size, dim=100, device=device):
@@ -17,7 +17,7 @@ def sample_noise(batch_size, dim=100, device=device):
     according to a Gaussian distribution, where N is the batch size 
     """
     z = torch.FloatTensor(
-        batch_size, dim
+        batch_size, 1, dim # Additional channel dimension
     ).to(device)
     z.data.normal_() # Ensure normally distributed elements
 

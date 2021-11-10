@@ -110,6 +110,8 @@ def train(
         # Train only the generator
         set_trainable_gradients(generator, False)
         set_trainable_gradients(discriminator, True)
+        generator.eval()
+        discriminator.train()
 
         # Split data into random batches
         x_dataloader = iter(DataLoader(
@@ -142,6 +144,8 @@ def train(
         # Compute generator loss
         set_trainable_gradients(generator, True)
         set_trainable_gradients(discriminator, False)
+        generator.train()
+        discriminator.eval()
 
         generator.zero_grad()
         optimizer_g.zero_grad()

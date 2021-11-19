@@ -129,6 +129,7 @@ class WaveNetEncoder(nn.Module):
 
         self.device = device
         self.in_dim = in_dim
+        assert self.in_dim % 2 == 0, "Signal length should be multiple of 2 to facilitate matching of reconstructed signal dimensions"
         self.out_dim = out_dim
         self.block_config = block_config
 
@@ -158,7 +159,7 @@ class WaveNetEncoder(nn.Module):
 
 
     def forward(self, x):
-        # Convolutional feature map - Can use directly into decoder
+        # TODO: Consider using the extracted feature maps from encoder blocks as inputs into decoder
+        #       and feature vector separately for separate multi task training?
         feat = self.encoder_blocks(x)
         return self.vae(feat)
-        

@@ -115,17 +115,21 @@ class WaveNetDecoder(nn.Module):
     Module that represents a decoder using the WaveNet cycles
     Visualisation of decoder pipeline
     
-    x --> Conv3 --> WaveNetCycle1 --> WaveNetCycle2 -- + --> Linear(ReLU) --> Linear(ReLU)
-                                            |          |
-                                            | ________ |
+    x --> Conv3 --> WaveNetCycle1 --> WaveNetCycle2 --  + --> Linear(ReLU) --> Linear(ReLU)
+                                            |           |
+                                            | _ _ _ _ _ |
     """
     def __init__(
         self,
         in_channels,
+        latent_dim,
         out_dim,
         wavenet_channels=128,
         wavenet_kernel_size=9,
         dilations=[2**i for i in range(10)],
+        # Parameters for deconvolution block
+        init_kernel_size=4,
+        deconv_stride=2,
         device=device) -> None:
         super().__init__()
 
@@ -158,6 +162,25 @@ class WaveNetDecoder(nn.Module):
                 )
             )
 
+        # Upsampling and deconvolution
+        num_channels = wavenet_channels
+        kernel_size = init_kernel_size
+        conv_transpose_blocks = []
+        num_expansions = int(np.log2(out_dim / latent_dim))
+        for i in range(num_expansions):
+            conv_transpose_blocks.append(
+                nn.ConvTranspose1d(
+                    num_channels, num_channels//2 if i < num_expansions - 1 else 1, 
+                    kernel_size=kernel_size, 
+                    stride=deconv_stride,
+                    padding = (kernel_size - deconv_stride)//2
+                )
+            )
+            kernel_size *= 2
+            num_channels //= 2
+
+        self.conv_transpose_blocks = nn.Sequential(*conv_transpose_blocks)
+
     def forward(self, x):
         # First Conv3
         out = self.pre_wavenet_conv(x)
@@ -168,16 +191,23 @@ class WaveNetDecoder(nn.Module):
         x_in = out
         out_skip_1 = torch.zeros_like(x_in)
         for wavenet in self.wavenet_cycle_1:
-            x_in, x_skip = wavenet(x_in)
-            out_skip_1 += x_skip
+            x_in = wavenet(x_in)
+            # out_skip_1 += x_skip
+        
+        out_skip_1 = x_in
 
         # Second WaveNet cycle
         # Use direct output of the previous WaveNet cycle as the input
         out_skip_2 = torch.zeros_like(x_in)
         for wavenet in self.wavenet_cycle_2:
-            x_in, x_skip = wavenet(x_in)
-            out_skip_2 += x_skip
+            x_in = wavenet(x_in)
+            # out_skip_2 += x_skip
+        
+        out_skip_2 = x_in
 
         wavenet_out = out_skip_1 + out_skip_2
+
+        # Deconvolution
+        out = self.conv_transpose_blocks(wavenet_out)
 
         return wavenet_out

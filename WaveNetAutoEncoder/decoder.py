@@ -50,7 +50,11 @@ class WaveNetLayer(nn.Module):
                                                      1 * 1
                                                        |
                                                        |
-      -------- Accumulated skip connected inputs ----- + ----------------->                                                 +
+      -------- Accumulated skip connected inputs ----- + ----------------->
+
+    NOTE: Due to the nature of the implementation, may cause memory bloat from stray skip connection variables
+          Recommended to use the WaveNetCycle class implemented below that encapsulates and localizes logic for skip connections
+          within the forward function
     """
     def __init__(
         self,
@@ -61,6 +65,8 @@ class WaveNetLayer(nn.Module):
         dilation=1,
         device=device) -> None:
         super().__init__()
+
+        self.device = device
 
         # Convolution filter component
         self.conv_filter = CausalConv1d(
@@ -85,13 +91,15 @@ class WaveNetLayer(nn.Module):
         # Residual connections
         self.residual_conv = nn.Conv1d(
             in_channels, out_channels,
-            kernel_size=1, bias=False
+            kernel_size=1, bias=False,
+            device=self.device
         )
 
         # Skip connections
         self.skip_conv = nn.Conv1d(
             in_channels, out_channels,
-            kernel_size=1, bias=False
+            kernel_size=1, bias=False,
+            device=self.device
         )
 
     def forward(self, x):
@@ -110,12 +118,114 @@ class WaveNetLayer(nn.Module):
 
         return out_residual, out_skip
 
+class WaveNetCycle(nn.Module):
+    """
+    Module that represents a WaveNetCycle consisting of sequential application
+    of WaveNet units using Gated Causal Convolutional Layer with residual connections.
+    The number of WaveNet units is dependent on the number of dilations used
+    
+    A visual representation of a WaveNet unit is given below(Repeated from WaveNetLayer):
+
+         | -----------------------Residual---------------------------|
+         |                                                           |
+         |      | -- CausalConv1d -- TanH ----- |                    |
+    x -- | ---- |                               * ---- | -- 1 * 1 -- + -- output
+         |      | -- CausalConv1d -- Sigmoid -- |      |
+                                                     1 * 1
+                                                       |
+                                                       |
+      -------- Accumulated skip connected inputs ----- + ----------------->
+
+    """
+    def __init__(
+        self,
+        wavenet_channels,
+        kernel_size,
+        dilations=[2**i for i in range(10)],
+        stride=1,
+        device=device):
+        super().__init__()
+
+        self.device = device
+        self.dilations = dilations
+
+        # Filter convolutional layer
+        self.conv_filter = nn.ModuleList()
+        self.activation_filter = nn.Tanh()
+        
+        # Gated convolutional layer
+        self.conv_gate = nn.ModuleList()
+        self.activation_gate = nn.Sigmoid()
+        
+        # Residual convolution layer
+        self.conv_residual = nn.ModuleList()
+
+        # Skip connection convolution
+        self.conv_skip = nn.ModuleList()
+
+        # Populate filter and gated convolutional layers with CausalConv1d
+        # Skip and residual connections uses 1x1 convolutional operations
+        for d in self.dilations:
+            self.conv_filter.append(
+                CausalConv1d(
+                    wavenet_channels, wavenet_channels,
+                    kernel_size, 
+                    stride=stride,
+                    dilation=d,
+                    device=self.device
+                )
+            )
+            self.conv_gate.append(
+                CausalConv1d(
+                    wavenet_channels, wavenet_channels,
+                    kernel_size, 
+                    stride=stride,
+                    dilation=d,
+                    device=self.device
+                )
+            )
+            self.conv_residual.append(
+                nn.Conv1d(
+                    wavenet_channels, wavenet_channels,
+                    kernel_size=1, bias=False,
+                    device=self.device
+                )
+            )
+            self.conv_skip.append(
+                nn.Conv1d(
+                    wavenet_channels, wavenet_channels,
+                    kernel_size=1, bias=False,
+                    device=self.device
+                )
+            )
+
+    def forward(self, x):
+
+        x_in = x
+        out_skip = torch.zeros_like(x)
+
+        for i in range(len(self.dilations)):
+            # Filter and gated convolutions
+            f = self.conv_filter[i](x_in)
+            f = self.activation_filter(f)
+            g = self.conv_gate[i](x_in)
+            g = self.activation_gate(g)
+            x_in = f * g
+
+            # Accumulate skip connections
+            out_skip += self.conv_skip[i](x_in)
+
+            # Residual connection between input and gated convolution
+            x_in = self.conv_residual[i](x_in) + x_in
+        
+        return x_in, out_skip
+
 class WaveNetDecoder(nn.Module):
     """
     Module that represents a decoder using the WaveNet cycles
     Visualisation of decoder pipeline
     
-    x --> Conv3 --> WaveNetCycle1 --> WaveNetCycle2 --  + --> Linear(ReLU) --> Linear(ReLU)
+    x --> Conv3 --> WaveNetCycle1 --> WaveNetCycle2 --  + --> ConvTranpose1d Block
                                             |           |
                                             | _ _ _ _ _ |
     """
@@ -142,25 +252,18 @@ class WaveNetDecoder(nn.Module):
         )
         
         # WaveNet Cycles
-        self.wavenet_cycle_1 = nn.ModuleList()
-        self.wavenet_cycle_2 = nn.ModuleList()
-        for d in dilations:
-            self.wavenet_cycle_1.append(
-                WaveNetLayer(
-                    wavenet_channels, wavenet_channels, 
-                    wavenet_kernel_size, 
-                    dilation=d,
-                    device=self.device
-                )
-            )
-            self.wavenet_cycle_2.append(
-                WaveNetLayer(
-                    wavenet_channels, wavenet_channels, 
-                    wavenet_kernel_size, 
-                    dilation=d,
-                    device=self.device
-                )
-            )
+        self.wavenet_cycle_1 = WaveNetCycle(
+            wavenet_channels, 
+            wavenet_kernel_size,
+            dilations=dilations,
+            device=self.device
+        )
+        self.wavenet_cycle_2 = WaveNetCycle(
+            wavenet_channels, 
+            wavenet_kernel_size,
+            dilations=dilations,
+            device=self.device
+        )
 
         # Upsampling and deconvolution
         num_channels = wavenet_channels
@@ -173,7 +276,8 @@ class WaveNetDecoder(nn.Module):
                     num_channels, num_channels//2 if i < num_expansions - 1 else 1, 
                     kernel_size=kernel_size, 
                     stride=deconv_stride,
-                    padding = (kernel_size - deconv_stride)//2
+                    padding = (kernel_size - deconv_stride)//2,
+                    device=self.device
                 )
             )
             kernel_size *= 2
@@ -188,22 +292,10 @@ class WaveNetDecoder(nn.Module):
         # WaveNet Cycle computation
         # Use the output of the first WaveNet Cycle as a residual connection
         # With the second WaveNetCycle
-        x_in = out
-        out_skip_1 = torch.zeros_like(x_in)
-        for wavenet in self.wavenet_cycle_1:
-            x_in = wavenet(x_in)
-            # out_skip_1 += x_skip
-        
-        out_skip_1 = x_in
+        x_in, out_skip_1 = self.wavenet_cycle_1(out)
 
         # Second WaveNet cycle
-        # Use direct output of the previous WaveNet cycle as the input
-        out_skip_2 = torch.zeros_like(x_in)
-        for wavenet in self.wavenet_cycle_2:
-            x_in = wavenet(x_in)
-            # out_skip_2 += x_skip
-        
-        out_skip_2 = x_in
+        x_in, out_skip_2 = self.wavenet_cycle_1(x_in)
 
         wavenet_out = out_skip_1 + out_skip_2
 

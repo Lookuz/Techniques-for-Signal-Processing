@@ -103,7 +103,6 @@ class VAEBottleNeck(nn.Module):
         latent = mu
         if self.train:
             epsilon = torch.randn(x.shape[0], 1, 1, device=self.device)
-            print(mu.shape, sigma.shape, epsilon.shape)
             latent += sigma * epsilon
 
         return latent
@@ -159,5 +158,7 @@ class WaveNetEncoder(nn.Module):
 
 
     def forward(self, x):
+        # Convolutional feature map - Can use directly into decoder
         feat = self.encoder_blocks(x)
         return self.vae(feat)
+        

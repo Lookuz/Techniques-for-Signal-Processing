@@ -1,3 +1,4 @@
+from typing import ForwardRef
 import numpy as np
 import torch
 from torch import nn
@@ -108,3 +109,75 @@ class WaveNetLayer(nn.Module):
         out_skip = self.skip_conv(out_hidden)
 
         return out_residual, out_skip
+
+class WaveNetDecoder(nn.Module):
+    """
+    Module that represents a decoder using the WaveNet cycles
+    Visualisation of decoder pipeline
+    
+    x --> Conv3 --> WaveNetCycle1 --> WaveNetCycle2 -- + --> Linear(ReLU) --> Linear(ReLU)
+                                            |          |
+                                            | ________ |
+    """
+    def __init__(
+        self,
+        in_channels,
+        out_dim,
+        wavenet_channels=128,
+        wavenet_kernel_size=9,
+        dilations=[2**i for i in range(10)],
+        device=device) -> None:
+        super().__init__()
+
+        self.device = device
+
+        # Conv3
+        self.pre_wavenet_conv = nn.Conv1d(
+            in_channels, wavenet_channels,
+            kernel_size=3, padding=1, device=self.device
+        )
+        
+        # WaveNet Cycles
+        self.wavenet_cycle_1 = nn.ModuleList()
+        self.wavenet_cycle_2 = nn.ModuleList()
+        for d in dilations:
+            self.wavenet_cycle_1.append(
+                WaveNetLayer(
+                    wavenet_channels, wavenet_channels, 
+                    wavenet_kernel_size, 
+                    dilation=d,
+                    device=self.device
+                )
+            )
+            self.wavenet_cycle_2.append(
+                WaveNetLayer(
+                    wavenet_channels, wavenet_channels, 
+                    wavenet_kernel_size, 
+                    dilation=d,
+                    device=self.device
+                )
+            )
+
+    def forward(self, x):
+        # First Conv3
+        out = self.pre_wavenet_conv(x)
+
+        # WaveNet Cycle computation
+        # Use the output of the first WaveNet Cycle as a residual connection
+        # With the second WaveNetCycle
+        x_in = out
+        out_skip_1 = torch.zeros_like(x_in)
+        for wavenet in self.wavenet_cycle_1:
+            x_in, x_skip = wavenet(x_in)
+            out_skip_1 += x_skip
+
+        # Second WaveNet cycle
+        # Use direct output of the previous WaveNet cycle as the input
+        out_skip_2 = torch.zeros_like(x_in)
+        for wavenet in self.wavenet_cycle_2:
+            x_in, x_skip = wavenet(x_in)
+            out_skip_2 += x_skip
+
+        wavenet_out = out_skip_1 + out_skip_2
+
+        return wavenet_out

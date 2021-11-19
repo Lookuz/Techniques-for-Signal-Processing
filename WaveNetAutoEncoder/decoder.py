@@ -302,4 +302,4 @@ class WaveNetDecoder(nn.Module):
         # Deconvolution
         out = self.conv_transpose_blocks(wavenet_out)
 
-        return wavenet_out
+        return out

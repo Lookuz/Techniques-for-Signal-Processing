@@ -76,11 +76,16 @@ class SpatialPyramidPool1d(nn.Module):
         self.pooling_mode = pooling_mode
         self.flatten = nn.Flatten()
 
+    def compute_bins(self):
+        """
+        Computes total number of bins across all levels
+        """
+        return sum(self.levels)
+
     def forward(self, x):
         feature_length = x.shape[-1]
         out = None
         for level in self.levels:
-            print(level)
             # Define kernel size proportional to feature map length
             kernel_size = int(math.ceil(feature_length / level))
 
@@ -97,15 +102,15 @@ class SpatialPyramidPool1d(nn.Module):
                 pool = nn.AvgPool1d(kernel_size, stride=kernel_size, padding=0)
             
             x_pooled = pool(x_padded)
-            print(x_pooled)
             
             out = torch.cat((out, self.flatten(x_pooled)), dim=1) if out is not None else self.flatten(x_pooled)
 
         return out
 
-class VAEBottleNeck(nn.Module):
-    """offset
+class VAEBottleNeckConv(nn.Module):
+    """
     Module representing the Variational Autoencoder(VAE) bottleneck segment
+    using Convolutional layers
     """
     def __init__(
         self,
@@ -157,6 +162,47 @@ class VAEBottleNeck(nn.Module):
 
         return latent
 
+class VAEBottleneckLinear(nn.Module):
+    """
+    Module representing the Variational Autoencoder(VAE) bottleneck segment
+    using Linear layers
+    """
+    def __init__(
+        self,
+        in_dim,
+        out_dim,
+        device=device):
+        super().__init__()
+
+        self.in_dim = in_dim
+        self.out_dim = out_dim
+        self.device = device
+
+        # Feature vector mean
+        self.linear_mu = nn.Sequential(
+            nn.Linear(self.in_dim, self.out_dim, device=self.device),
+            nn.Tanh(),
+        )
+        # Feature vector variance
+        self.linear_sigma = nn.Linear(
+            self.in_dim, self.out_dim, device=self.device
+        )
+
+    def forward(self, x):
+        # Latent representation mean
+        mu = self.linear_mu(x)
+
+        # Latent representation variance
+        sigma = self.linear_sigma(x)
+        sigma = torch.exp(0.5 * sigma)
+
+        latent = mu
+        if self.train:
+            epsilon = torch.randn(x.shape[0], 1, device=self.device)
+            latent += sigma * epsilon
+    
+        return latent
+
 class WaveNetEncoder(nn.Module):
     def __init__(
         self,
@@ -200,7 +246,7 @@ class WaveNetEncoder(nn.Module):
         self.encoder_blocks = nn.Sequential(*encoder_blocks)
 
         # VAE Module
-        self.vae = VAEBottleNeck(
+        self.vae = VAEBottleNeckConv(
             block_config[-1]['out_channels'],
             conv_feat_size,
             self.out_dim,
@@ -213,3 +259,56 @@ class WaveNetEncoder(nn.Module):
         #       and feature vector separately for separate multi task training?
         feat = self.encoder_blocks(x)
         return self.vae(feat)
+
+class WaveNetEncoderSPP(nn.Module):
+    def __init__(
+        self, 
+        out_dim, 
+        block_config=[
+            { 'in_channels': 1,'out_channels': 256,'kernel_size': 9,'stride': 1,'residual': False }, 
+            { 'in_channels': 256,'out_channels': 256,'kernel_size': 9,'stride': 1,'residual': True }, 
+            { 'in_channels': 256,'out_channels': 256,'kernel_size': 15,'stride': 2,'residual': False }, 
+            { 'in_channels': 256,'out_channels': 256,'kernel_size': 9,'stride': 1,'residual': True }, 
+            { 'in_channels': 256,'out_channels': 256,'kernel_size': 9,'stride': 1,'residual': True }, 
+            { 'in_channels': 256,'out_channels': 256,'kernel_size': 15,'stride': 2,'residual': False }, 
+            { 'in_channels': 256,'out_channels': 256,'kernel_size': 9,'stride': 1,'residual': True }, 
+            { 'in_channels': 256,'out_channels': 256,'kernel_size': 9,'stride': 1,'residual': True }
+        ],
+        spp_pooling_levels=[2**i for i in range(1, 7)],
+        spp_pooling_mode='max', 
+        device=device):
+        super().__init__()
+
+        self.device = device
+        self.out_dim = out_dim
+
+        # Encoder blocks using convolutions and residual connections
+        encoder_blocks = []
+        for config in block_config:
+            encoder_blocks.append(
+                ConvReLUBlock(
+                    config['in_channels'], config['out_channels'],
+                    config['kernel_size'], config['stride'],
+                    config['residual'], self.device
+                )
+            )
+            
+        self.encoder_blocks = nn.Sequential(*encoder_blocks)
+        
+        # Spatial Pyramid Pooling
+        self.spp = SpatialPyramidPool1d(
+            pooling_levels=spp_pooling_levels,
+            pooling_mode=spp_pooling_mode
+        )
+        vae_in_dim = self.spp.compute_bins()
+
+        # VAE Bottleneck
+        self.vae = VAEBottleneckLinear(
+            vae_in_dim, out_dim,
+            device=self.device
+        )
+    
+    def forward(self, x):
+        feat = self.encoder_blocks(x)
+        feat_spp = self.spp(feat)
+        return self.vae(feat_spp)

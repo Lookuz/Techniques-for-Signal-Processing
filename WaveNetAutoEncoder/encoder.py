@@ -1,6 +1,9 @@
+import math
 import numpy as np
 import torch
 from torch import nn
+from torch.nn import functional as F
+from torch.nn.modules import padding
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
@@ -50,6 +53,53 @@ class ConvReLUBlock(nn.Module):
         # Residual connection
         if self.residual:
             out += x[:, :, offset:-offset]
+
+        return out
+
+class SpatialPyramidPool1d(nn.Module):
+    """
+    Class that performs Spatial Pyramid Pooling over 1D convolutional maps
+    according to the number of levels defined.
+    Adapted from Spatial Pyramid Pooling for 2D images by He et al.
+    """
+    def __init__(
+        self,
+        pooling_levels=[2**i for i in range(1, 7)],
+        pooling_mode='max',
+        device=device):
+        super().__init__()
+
+        self.levels = pooling_levels
+        self.device = device
+
+        assert pooling_mode in ['max', 'avg'], "Pooling types supported: max(nn.MaxPool1d), avg(nn.AvgPool1d)"
+        self.pooling_mode = pooling_mode
+        self.flatten = nn.Flatten()
+
+    def forward(self, x):
+        feature_length = x.shape[-1]
+        out = None
+        for level in self.levels:
+            print(level)
+            # Define kernel size proportional to feature map length
+            kernel_size = int(math.ceil(feature_length / level))
+
+            # Form left and right padding to properly segregate feature map into grids
+            pad_left = int(math.floor((kernel_size * level - feature_length) / 2))
+            pad_right = int(math.ceil((kernel_size * level - feature_length) / 2))
+
+            x_padded = F.pad(x, pad=[pad_left, pad_right], value=0)
+
+            # Pooling according to defined mode
+            if self.pooling_mode == 'max':
+                pool = nn.MaxPool1d(kernel_size, stride=kernel_size, padding=0)
+            elif self.pooling_mode == 'avg':
+                pool = nn.AvgPool1d(kernel_size, stride=kernel_size, padding=0)
+            
+            x_pooled = pool(x_padded)
+            print(x_pooled)
+            
+            out = torch.cat((out, self.flatten(x_pooled)), dim=1) if out is not None else self.flatten(x_pooled)
 
         return out
 
